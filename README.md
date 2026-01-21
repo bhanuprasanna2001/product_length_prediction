@@ -22,7 +22,16 @@ Given product information (title, bullet points, description, product type), pre
 - Result: Expensive, slow, poor performance
 
 ### 2026 Reattempt (This Repo)
-Key insight: **Product type is also a strong signal** (from EDA, RMSLE improves 0.98 → 0.83 with just type median).
+Key insight: **Product type is also a strong signal**. Found strategies and domain specific knowledge to actually improve the predictions.
+
+![WANDB Board Plots](public/image.png)
+
+### Post-training Tricks
+
+Training alone isn't enough.
+
+1. **Snapping** — Round predictions to the nearest length that exists in training data. Products come in standard sizes.
+2. **Ensemble** — I only used one model (MiniLM). The winners combined more than 1 model and then took the minimum prediction to counter over-prediction bias.
 
 Reference Dataset: [Kaggle Amazon ML Challenge](https://www.kaggle.com/datasets/ashisparida/amazon-ml-challenge-2023)
 

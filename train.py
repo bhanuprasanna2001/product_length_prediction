@@ -1,3 +1,6 @@
+import os
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, LearningRateMonitor
@@ -43,8 +46,7 @@ def main():
     trainer = pl.Trainer(
         max_epochs=config.epochs,
         accelerator="auto",
-        devices=1,
-        precision="16-mixed",
+        devices="auto",
         logger=wandb_logger,
         callbacks=callbacks,
         gradient_clip_val=1.0,
