@@ -1,4 +1,4 @@
-# Amazon ML Challenge 2023 - Product Length Prediction
+# Product Length Prediction
 
 **Goal:** Predict product length from text descriptions. Metric: MAPE.
 
