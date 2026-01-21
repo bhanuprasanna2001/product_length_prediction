@@ -2,6 +2,8 @@
 
 **Goal:** Predict product length from text descriptions. Metric: MAPE.
 
+**Logging:** WandB
+
 ## Problem
 
 Given product information (title, bullet points, description, product type), predict the physical length of the product.
