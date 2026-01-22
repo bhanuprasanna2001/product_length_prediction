@@ -48,21 +48,31 @@ class ProductDataModule(pl.LightningDataModule):
     def setup(self, stage=None):
         train_df = pd.read_csv(self.config.train_path)
         
+        # Shuffle the dataframe for random split
+        train_df = train_df.sample(frac=1, random_state=self.config.seed).reset_index(drop=True)
+        
         # Build product type mapping
         all_types = train_df['PRODUCT_TYPE_ID'].unique()
         self.product_type_map = {t: i+1 for i, t in enumerate(all_types)}  # 0 reserved for unknown
         self.num_product_types = len(all_types) + 1
         
-        # Split train/val
-        val_size = int(0.1 * len(train_df))
-        self.train_df = train_df.iloc[:-val_size]
-        self.val_df = train_df.iloc[-val_size:]
+        # Split train/val/test (80/10/10)
+        n = len(train_df)
+        train_end = int(0.8 * n)
+        val_end = int(0.9 * n)
+        
+        self.train_df = train_df.iloc[:train_end]
+        self.val_df = train_df.iloc[train_end:val_end]
+        self.test_df = train_df.iloc[val_end:]
         
         self.train_ds = ProductDataset(
             self.train_df, self.tokenizer, self.config.max_length, self.product_type_map
         )
         self.val_ds = ProductDataset(
             self.val_df, self.tokenizer, self.config.max_length, self.product_type_map
+        )
+        self.test_ds = ProductDataset(
+            self.test_df, self.tokenizer, self.config.max_length, self.product_type_map
         )
         
     def train_dataloader(self):
@@ -78,6 +88,16 @@ class ProductDataModule(pl.LightningDataModule):
     def val_dataloader(self):
         return DataLoader(
             self.val_ds,
+            batch_size=self.config.batch_size,
+            shuffle=False,
+            num_workers=self.config.num_workers,
+            pin_memory=False,
+            persistent_workers=True if self.config.num_workers > 0 else False
+        )
+    
+    def test_dataloader(self):
+        return DataLoader(
+            self.test_ds,
             batch_size=self.config.batch_size,
             shuffle=False,
             num_workers=self.config.num_workers,

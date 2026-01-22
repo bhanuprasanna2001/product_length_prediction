@@ -33,7 +33,7 @@ Key insight: **Product type is also a strong signal**. Found strategies and doma
 Training alone isn't enough.
 
 1. **Snapping** — Round predictions to the nearest length that exists in training data. Products come in standard sizes.
-2. **Ensemble** — I only used one model (MiniLM). The winners combined more than 1 model and then took the minimum prediction to counter over-prediction bias.
+2. **Ensemble** — I only used one model (MiniLM). It is often better to use a combined more than 1 model and then take the minimum prediction to counter over-prediction bias.
 
 Reference Dataset: [Kaggle Amazon ML Challenge](https://www.kaggle.com/datasets/ashisparida/amazon-ml-challenge-2023)
 

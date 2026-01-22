@@ -70,6 +70,9 @@ class ProductLengthModel(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         return self._step(batch, 'val')
     
+    def test_step(self, batch, batch_idx):
+        return self._step(batch, 'test')
+    
     def configure_optimizers(self):
         # Different LR for encoder vs head
         encoder_params = list(self.text_encoder.parameters())

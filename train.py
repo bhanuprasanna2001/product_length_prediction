@@ -56,6 +56,11 @@ def main():
     )
     
     trainer.fit(model, dm)
+    
+    # Test using the held-out test set from train data
+    print("\n--- Testing on held-out test set ---")
+    trainer.test(model, dm)
+    
     wandb.finish()
 
 
