@@ -2,11 +2,16 @@
 # Edit at https://www.toptal.com/developers/gitignore?templates=python,jupyternotebooks,visualstudiocode,jetbrains+all,macos,windows,linux,xcode
 
 ### Extra ###
-data/*
+data/dataset/*
+data/total_sentence_data/*
+data/embeddings/*
 !data/.gitkeep
 ml_template
 wandb/*
 !wandb/.gitkeep
+checkpoints/*
+!checkpoints/.gitkeep
+!data/embeddings/.gitkeep
 
 ### JetBrains+all ###
 # Covers JetBrains IDEs: IntelliJ, RubyMine, PhpStorm, AppCode, PyCharm, CLion, Android Studio, WebStorm and Rider

@@ -1,137 +1,104 @@
 # Product Length Prediction
 
-**Goal:** Predict product length from text descriptions. Metric: MAPE.
+Predict physical product length from text descriptions using multilingual embedding ensemble.
 
-**Logging:** WandB
-
-## Problem
-
-Given product information (title, bullet points, description, product type), predict the physical length of the product.
-
-| Column | Description |
-|--------|-------------|
-| `TITLE` | Product title |
-| `BULLET_POINTS` | Feature bullets |
-| `DESCRIPTION` | Full description |
-| `PRODUCT_TYPE_ID` | Category identifier |
-| `PRODUCT_LENGTH` | **Target** (to predict) |
-
-## My Journey
-
-### 2023 Attempt (Failed)
-- Used BERT to encode text → predict length directly
-- Ignored `PRODUCT_TYPE_ID` completely
-- Result: Expensive, slow, poor performance
-
-### 2026 Reattempt (This Repo)
-Key insight: **Product type is also a strong signal**. Found strategies and domain specific knowledge to actually improve the predictions.
-
-![WANDB Board Plots](public/image.png)
-
-### Post-training Tricks
-
-Training alone isn't enough.
-
-1. **Snapping** — Round predictions to the nearest length that exists in training data. Products come in standard sizes.
-2. **Ensemble** — I only used one model (MiniLM). It is often better to use a combined more than 1 model and then take the minimum prediction to counter over-prediction bias.
-
-Reference Dataset: [Kaggle Amazon ML Challenge](https://www.kaggle.com/datasets/ashisparida/amazon-ml-challenge-2023)
-
-## Architecture
-
-```
-┌─────────────────┐     ┌──────────────────┐
-│  TOTAL_SENTENCE │     │ PRODUCT_TYPE_ID  │
-│  (combined text)│     │   (categorical)  │
-└────────┬────────┘     └────────┬─────────┘
-         │                       │
-    ┌────▼────┐            ┌─────▼─────┐
-    │ MiniLM  │            │ Embedding │
-    │ (384-d) │            │  (64-d)   │
-    └────┬────┘            └─────┬─────┘
-         │                       │
-         └───────┬───────────────┘
-                 │ concatenate
-          ┌──────▼──────┐
-          │   448-d     │
-          │  MLP Head   │
-          │  256 → 64   │
-          └──────┬──────┘
-                 │
-          ┌──────▼──────┐
-          │   Length    │
-          └─────────────┘
-```
-
-## Key Decisions
-
-| Decision | Why |
-|----------|-----|
-| **Concatenation** (not addition) | Preserves information from both modalities in separate dimensions |
-| **MiniLM-L6-v2** (not BERT) | similar quality for sentence embeddings |
-| **Learnable type embedding** | Captures category-specific length priors |
-| **Log-MSE loss** | Approximates RMSLE; more stable than MAPE optimization |
-| **Lower LR for encoder** | Fine-tune pretrained weights gently (0.1x head LR) |
-
-## Why Concatenation Works
-
-Both become dense vectors of floats → can be combined:
-```
-Text:  [t₀, t₁, ..., t₃₈₃]      # 384 dimensions
-Type:  [p₀, p₁, ..., p₆₃]       # 64 dimensions
-───────────────────────────────
-Combined: [t₀...t₃₈₃, p₀...p₆₃] # 448 dimensions (no collision)
-```
-
-The MLP learns which dimensions matter. If text contains explicit dimensions ("Width 4.5 feet"), it uses text. Otherwise, it relies on the product type prior.
-
-## Why RMSLE?
-
-Root Mean Squared Logarithmic Error (RMSLE) because it handles large scales/skewed data, penalty on underestimation, and RMSLE is easier to use as a loss function because of differentiability than the non-differentiable MAPE directly.
+**Competition Metric:** MAPE (Mean Absolute Percentage Error)
 
 ## Project Structure
 
 ```
-├── eda.ipynb              # Exploratory data analysis
-├── train.py               # Local training script
-├── predict.py             # Generate submission
-├── evaluate.py            # MAPE/RMSLE evaluation
-├── notebooks/
-│   ├── eda.ipynb          # Exploratory data analysis
-│   └── train_colab.ipynb  # Kaggle/Colab notebook (self-contained)
-└── src/
-    ├── config.py          # Hyperparameters
-    ├── model.py           # LightningModule
-    └── data/
-        └── dataset.py     # DataModule
+.
+├── configs/
+│   └── default.yaml              # Configuration file
+├── scripts/
+│   ├── extract_embeddings.py     # Step 1: Pre-compute embeddings
+│   ├── train.py                  # Step 2: Train model
+│   ├── predict.py                # Step 3: Generate submission
+│   └── evaluate.py               # Evaluate predictions
+├── src/product_length/
+│   ├── config.py                 # Configuration management
+│   ├── data/
+│   │   └── embedding_dataset.py  # DataModule for embeddings
+│   ├── models/
+│   │   └── ensemble.py           # MLP model architecture
+│   ├── training/
+│   │   ├── callbacks.py          # W&B logging callbacks
+│   │   └── trainer.py            # Training pipeline
+│   ├── inference/
+│   │   ├── postprocessing.py     # Calibration, snapping
+│   │   └── predictor.py          # Prediction pipeline
+│   └── utils/
+│       ├── metrics.py            # MAPE, RMSLE
+│       └── embeddings.py         # Embedding extraction
+├── data/
+│   ├── embeddings/               # Pre-computed embeddings
+│   └── total_sentence_data/      # Raw data
+├── checkpoints/                  # Model checkpoints
+├── notebooks/                    # EDA notebooks
+└── wandb/                        # W&B logs
 ```
 
 ## Quick Start
 
-**Local:**
+### 1. Extract Embeddings (one-time, ~2-4 hours)
+
 ```bash
-python train.py
-python predict.py checkpoints/best-*.ckpt
+python scripts/extract_embeddings.py --split train
+python scripts/extract_embeddings.py --split test
 ```
 
-**Colab or Kaggle:**
-1. Upload `train_colab.ipynb`
-2. Upload data to Drive
-3. Run all cells
+### 2. Train Model
 
-## EDA Findings
+```bash
+python scripts/train.py
+```
 
-- **2.25M** train samples, **735K** test samples
-- **6,295** unique product types
-- Target heavily skewed (range: 1 to 9.4M)
-- ~32% products have explicit dimensions in text
-- Text features alone: near-zero correlation with target
-- Product type alone: significant signal
+### 3. Generate Predictions
+
+```bash
+python scripts/predict.py --checkpoint checkpoints/ensemble-XX-YY.ckpt
+```
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│           PRE-COMPUTED MULTILINGUAL EMBEDDINGS              │
+├─────────┬─────────┬─────────┬─────────┬─────────┬──────────┤
+│ MiniLM  │  MPNet  │  LaBSE  │   E5    │ BGE-M3  │ ProdType │
+│  384d   │  768d   │  768d   │  768d   │  1024d  │  128d    │
+└────┬────┴────┬────┴────┬────┴────┬────┴────┬────┴────┬─────┘
+     └─────────┴─────────┴────┬────┴─────────┴─────────┘
+                              │ concat (3840d)
+                        ┌─────▼─────┐
+                        │    MLP    │
+                        │ 1024→256  │
+                        │  256→64   │
+                        │   64→1    │
+                        └─────┬─────┘
+                              ▼
+                           LENGTH
+```
+
+## Configuration
+
+Edit `configs/default.yaml` to customize:
+
+- **embeddings.active**: Which models to use
+- **model.hidden_dims**: MLP architecture  
+- **training.loss_fn**: "huber", "mse", or "mape"
+- **training.epochs**: Number of epochs
+- **postprocessing**: Calibration and snapping options
+
+## Post-Processing Pipeline
+
+1. **Isotonic Calibration** - Corrects systematic bias
+2. **Type-Specific Snapping** - Round to valid lengths per product type
+3. **Range Clipping** - Ensure within training data bounds
 
 ## Tech Stack
 
-- PyTorch Lightning 2.6
-- Transformers (HuggingFace)
+- PyTorch Lightning
+- Sentence Transformers (multilingual models)
 - Weights & Biases (logging)
-- sentence-transformers
-
+- scikit-learn (calibration)

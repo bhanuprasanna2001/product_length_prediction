@@ -1,0 +1,113 @@
+# =============================================================================
+# Product Length Prediction - Default Configuration
+# =============================================================================
+# Usage: python scripts/train.py --config configs/default.yaml
+
+# -----------------------------------------------------------------------------
+# Data
+# -----------------------------------------------------------------------------
+data:
+  # train_path: Has labels (PRODUCT_LENGTH) - use for training/validation/testing
+  train_path: "data/total_sentence_data/total_sentence_data/total_sentence_train.csv"
+  
+  # test_path: NO labels - only for final submission generation
+  test_path: "data/total_sentence_data/total_sentence_data/total_sentence_test.csv"
+  
+  embedding_dir: "data/embeddings"
+  
+  # Internal split of train_path into train/val/test (all have labels)
+  # Test split here is for model evaluation, NOT the competition test set
+  train_ratio: 0.80
+  val_ratio: 0.10
+  test_ratio: 0.10  # Internal test set for evaluation
+
+# -----------------------------------------------------------------------------
+# Embedding Models (order matters for concatenation)
+# -----------------------------------------------------------------------------
+embeddings:
+  models:
+    minilm:
+      name: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+      dim: 384
+    mpnet:
+      name: "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+      dim: 768
+    distiluse:
+      name: "sentence-transformers/distiluse-base-multilingual-cased-v1"
+      dim: 512
+    e5small:
+      name: "intfloat/multilingual-e5-small"
+      dim: 384
+    allmpnet:
+      name: "sentence-transformers/all-mpnet-base-v2"
+      dim: 768
+  
+  # Which models to use (can subset for faster experiments)
+  # # Total dim: 384 + 768 + 512 + 384 + 768 = 2816
+  # active: ["minilm", "mpnet", "distiluse", "e5small", "allmpnet"]
+  # Total dim: 384 + 768 + 512 + 384 = 2048
+  active: ["minilm", "mpnet", "distiluse", "e5small"]
+  batch_size: 128
+
+# -----------------------------------------------------------------------------
+# Model Architecture
+# -----------------------------------------------------------------------------
+model:
+  product_type_emb_dim: 128
+  hidden_dims: [1024, 256, 64]
+  dropout: 0.2
+  use_batch_norm: true
+
+# -----------------------------------------------------------------------------
+# Training
+# -----------------------------------------------------------------------------
+training:
+  batch_size: 512
+  lr: 1.0e-3
+  weight_decay: 0.01
+  epochs: 30
+  warmup_ratio: 0.05
+  
+  # Loss: "mse", "huber", "mape"
+  loss_fn: "mape"
+  huber_delta: 0.5
+  
+  # Early stopping
+  patience: 5
+  
+  # Gradient clipping
+  gradient_clip_val: 1.0
+  
+  # Mixed precision
+  precision: "16-mixed"
+
+# -----------------------------------------------------------------------------
+# Post-Processing
+# -----------------------------------------------------------------------------
+postprocessing:
+  use_calibration: true
+  calibration_method: "isotonic"  # "isotonic" or "linear"
+  use_snapping: true
+  snap_by_type: true  # Type-specific vs global snapping
+
+# -----------------------------------------------------------------------------
+# Logging & Checkpoints
+# -----------------------------------------------------------------------------
+logging:
+  project: "amazon-product-length"
+  run_name: null  # Auto-generated if null
+  log_every_n_steps: 50
+  val_check_interval: 0.25  # Validate 4x per epoch
+
+checkpoints:
+  dir: "checkpoints"
+  save_top_k: 3
+  monitor: "val_mape"
+  mode: "min"
+
+# -----------------------------------------------------------------------------
+# System
+# -----------------------------------------------------------------------------
+system:
+  seed: 42
+  num_workers: 4
