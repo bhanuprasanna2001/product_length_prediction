@@ -1,104 +1,197 @@
 # Product Length Prediction
 
-Predict physical product length from text descriptions using multilingual embedding ensemble.
-
-**Competition Metric:** MAPE (Mean Absolute Percentage Error)
-
-## Project Structure
+Predict product length from text metadata. Competition metric: **MAPE** (Mean Absolute Percentage Error).
 
 ```
-.
-├── configs/
-│   └── default.yaml              # Configuration file
-├── scripts/
-│   ├── extract_embeddings.py     # Step 1: Pre-compute embeddings
-│   ├── train.py                  # Step 2: Train model
-│   ├── predict.py                # Step 3: Generate submission
-│   └── evaluate.py               # Evaluate predictions
-├── src/product_length/
-│   ├── config.py                 # Configuration management
-│   ├── data/
-│   │   └── embedding_dataset.py  # DataModule for embeddings
-│   ├── models/
-│   │   └── ensemble.py           # MLP model architecture
-│   ├── training/
-│   │   ├── callbacks.py          # W&B logging callbacks
-│   │   └── trainer.py            # Training pipeline
-│   ├── inference/
-│   │   ├── postprocessing.py     # Calibration, snapping
-│   │   └── predictor.py          # Prediction pipeline
-│   └── utils/
-│       ├── metrics.py            # MAPE, RMSLE
-│       └── embeddings.py         # Embedding extraction
-├── data/
-│   ├── embeddings/               # Pre-computed embeddings
-│   └── total_sentence_data/      # Raw data
-├── checkpoints/                  # Model checkpoints
-├── notebooks/                    # EDA notebooks
-└── wandb/                        # W&B logs
+score = max(0, 100 × (1 - MAPE))
 ```
 
-## Quick Start
+## Problem
 
-### 1. Extract Embeddings (one-time, ~2-4 hours)
+Given product information (title, bullet points, description, product type), predict the physical length.
 
-```bash
-python scripts/extract_embeddings.py --split train
-python scripts/extract_embeddings.py --split test
-```
+| Column | Description |
+|--------|-------------|
+| `TITLE` | Product title |
+| `BULLET_POINTS` | Feature bullets |
+| `DESCRIPTION` | Full description |
+| `PRODUCT_TYPE_ID` | Category identifier |
+| `PRODUCT_LENGTH` | **Target** (to predict) |
 
-### 2. Train Model
+Reference Dataset: [Kaggle Amazon ML Challenge](https://www.kaggle.com/datasets/ashisparida/amazon-ml-challenge-2023)
 
-```bash
-python scripts/train.py
-```
+---
 
-### 3. Generate Predictions
+## My Journey
 
-```bash
-python scripts/predict.py --checkpoint checkpoints/ensemble-XX-YY.ckpt
-```
+### 2023 Attempt (Failed)
+- Used BERT to encode text → predict length directly
+- Ignored `PRODUCT_TYPE_ID` completely
+- Result: Expensive, slow, poor performance
+
+### 2026 Reattempt (This Repo)
+Key insight: **Product type is a strong signal**, but text embeddings help differentiate within types. Pre-compute embeddings, train a lightweight MLP, and directly optimize for MAPE.
+
+---
+
+## Results
+
+| Metric | Validation | Test |
+|--------|------------|------|
+| **MAPE** | 59.15% | 57.87% |
+| **Score** | 40.85 | **42.13** |
+| **RMSLE** | 1.43 | 1.43 |
+
+Training converged in **8 epochs** (~80 minutes on MPS/M1). The model learns to predict values in a reasonable range, though some edge cases remain challenging.
+
+### Sample Predictions
+
+| Predicted | Actual | Error |
+|-----------|--------|-------|
+| 571.8 | 669.3 | 14.6% |
+| 491.6 | 500.0 | 1.7% |
+| 628.1 | 614.0 | 2.3% |
+| 584.9 | 600.0 | 2.5% |
+| 746.0 | 10.0 | 7360% 😅 |
+
+The model performs well on typical products (500-1000 range) but struggles with extreme values.
+
+### Training Curves
+
+![Training Curves](public/image.png)
+
+---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│           PRE-COMPUTED MULTILINGUAL EMBEDDINGS              │
-├─────────┬─────────┬─────────┬─────────┬─────────┬──────────┤
-│ MiniLM  │  MPNet  │  LaBSE  │   E5    │ BGE-M3  │ ProdType │
-│  384d   │  768d   │  768d   │  768d   │  1024d  │  128d    │
-└────┬────┴────┬────┴────┬────┴────┬────┴────┬────┴────┬─────┘
-     └─────────┴─────────┴────┬────┴─────────┴─────────┘
-                              │ concat (3840d)
-                        ┌─────▼─────┐
-                        │    MLP    │
-                        │ 1024→256  │
-                        │  256→64   │
-                        │   64→1    │
-                        └─────┬─────┘
-                              ▼
-                           LENGTH
+┌──────────────────────────────────────────────────────────┐
+│            PRE-COMPUTED TEXT EMBEDDINGS                  │
+├────────────┬────────────┬────────────┬────────────┬──────┤
+│   MiniLM   │   MPNet    │  DistilUSE │  E5-Small  │ Type │
+│    384d    │    768d    │    512d    │    384d    │ 128d │
+└─────┬──────┴─────┬──────┴─────┬──────┴─────┬──────┴──┬───┘
+      └────────────┴────────────┴─────┬──────┴─────────┘
+                                      │ concat (2176d)
+                                ┌─────▼─────┐
+                                │    MLP    │
+                                │ 1024 → 256│
+                                │  256 → 64 │
+                                │   64 → 1  │
+                                └─────┬─────┘
+                                      ▼
+                                   LENGTH
 ```
 
-## Configuration
+**Total Parameters:** 4.1M (lightweight!)
 
-Edit `configs/default.yaml` to customize:
+---
 
-- **embeddings.active**: Which models to use
-- **model.hidden_dims**: MLP architecture  
-- **training.loss_fn**: "huber", "mse", or "mape"
-- **training.epochs**: Number of epochs
-- **postprocessing**: Calibration and snapping options
+## Key Decisions
 
-## Post-Processing Pipeline
+| Decision | Why |
+|----------|-----|
+| **Pre-computed embeddings** | 4 models × 2.2M samples = expensive. Compute once, train fast. |
+| **Concatenation** | Preserves information from each embedding model separately |
+| **Learnable type embedding** | 12,322 product types → 128d learned representation |
+| **Direct MAPE loss** | Aligns training objective with evaluation metric |
+| **Mixed precision (FP16)** | 2x faster training on Apple Silicon |
 
-1. **Isotonic Calibration** - Corrects systematic bias
-2. **Type-Specific Snapping** - Round to valid lengths per product type
-3. **Range Clipping** - Ensure within training data bounds
+### Why MAPE Loss?
+
+I experimented with different losses:
+
+| Loss | Val MAPE | Notes |
+|------|----------|-------|
+| Huber (log-space) | 94% | Optimizes RMSLE, not MAPE |
+| **MAPE (direct)** | **59%** | Matches evaluation metric |
+
+The key insight: **train for what you're measured on**. Huber loss in log-space is smooth and stable, but optimizes the wrong thing.
+
+---
+
+## Training Details
+
+```yaml
+Data:
+  Train: 1,738,559 samples
+  Val: 217,320 samples  
+  Test: 217,320 samples
+  Product Types: 12,322
+  Unique Lengths: 11,299
+
+Model:
+  Text Embedding: 2048d (4 models concatenated)
+  Type Embedding: 128d (learnable)
+  Hidden Layers: [1024, 256, 64]
+  Dropout: 0.2
+  BatchNorm: Yes
+
+Training:
+  Batch Size: 512
+  Learning Rate: 1e-3
+  Optimizer: AdamW (weight_decay=0.01)
+  Scheduler: OneCycleLR
+  Epochs: 8 (early stopped)
+  Precision: FP16 mixed
+```
+
+---
+
+## Post-Processing (Explored)
+
+Tried several post-processing techniques: type-specific snapping, frequency-weighted snapping, blending with type medians. **None improved over raw predictions.** The MAPE-optimized model already produces well-positioned predictions—snapping sometimes moves them away from the true value.
+
+---
+
+## Project Structure
+
+```
+├── configs/
+│   └── default.yaml        # All hyperparameters
+├── scripts/
+│   ├── train.py            # Training entrypoint
+│   ├── predict.py          # Generate submission
+│   └── evaluate_postprocessing.py
+├── src/product_length/
+│   ├── config.py           # Config dataclasses
+│   ├── data/               # Dataset & DataModule
+│   ├── models/             # EnsembleModel (LightningModule)
+│   ├── training/           # Trainer & callbacks
+│   ├── inference/          # Prediction & post-processing
+│   └── utils/              # Metrics & helpers
+└── notebooks/
+    └── eda.ipynb           # Exploratory analysis
+```
+
+## Quick Start
+
+```bash
+# Extract embeddings (one-time, ~30 min)
+python scripts/extract_embeddings.py
+
+# Train
+python scripts/train.py --config configs/default.yaml
+
+# Predict
+python scripts/predict.py --checkpoint checkpoints/best.ckpt
+```
+
+---
+
+## What I Learned
+
+1. **Loss function matters enormously.** Switching from Huber to MAPE dropped error from 94% to 59%.
+2. **Pre-compute embeddings.** Training is 100x faster when you're not running transformers every epoch.
+3. **Product type is powerful.** Even a simple per-type median gets you halfway there.
+4. **MAPE is brutal on small values.** Products with length < 10 dominate the error.
+5. **Post-processing isn't magic.** If your model is already optimized for MAPE, snapping can hurt.
+
+---
 
 ## Tech Stack
 
 - PyTorch Lightning
-- Sentence Transformers (multilingual models)
-- Weights & Biases (logging)
-- scikit-learn (calibration)
+- sentence-transformers
+- Weights & Biases
+- NumPy / Pandas
