@@ -1,0 +1,20 @@
+# @package _global_
+# Log-MAPE loss experiment - better for skewed distributions
+
+experiment_name: log_mape
+
+training:
+  loss_fn: log_mape
+  epochs: 30
+  batch_size: 512
+  lr: 0.001
+
+features:
+  use_knn: true
+  knn_embeddings:
+    - minilm
+  knn_ensemble: concat
+  use_log_target: false
+
+logging:
+  run_name: log-mape-loss

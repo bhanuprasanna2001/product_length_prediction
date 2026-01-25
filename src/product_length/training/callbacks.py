@@ -1,8 +1,4 @@
-"""
-Training Callbacks
-==================
-Custom callbacks for logging, visualization, and monitoring.
-"""
+"""Custom Lightning callbacks for visualization and metric tracking."""
 
 import numpy as np
 import torch
@@ -20,59 +16,46 @@ class SamplePredictionCallback(Callback):
         if not trainer.val_dataloaders:
             return
             
-        all_preds, all_targets, all_types = [], [], []
+        preds, targets, types = [], [], []
         pl_module.eval()
         device = pl_module.device
         
         with torch.no_grad():
             for batch in trainer.val_dataloaders:
+                knn = batch.get("knn_features")
                 pred = pl_module(
                     batch["text_embedding"].to(device),
                     batch["product_type"].to(device),
+                    knn_features=knn.to(device) if knn is not None else None,
                 )
-                all_preds.append(pred.cpu().numpy())
-                all_targets.append(batch["target"].numpy())
-                all_types.append(batch["product_type"].numpy())
+                preds.append(pred.cpu().numpy())
+                targets.append(batch["target"].numpy())
+                types.append(batch["product_type"].numpy())
                 
-                if sum(len(p) for p in all_preds) >= self.num_samples * 2:
+                if sum(len(p) for p in preds) >= self.num_samples * 2:
                     break
         
-        preds = np.concatenate(all_preds)
-        targets = np.concatenate(all_targets)
-        types = np.concatenate(all_types)
+        preds, targets, types = np.concatenate(preds), np.concatenate(targets), np.concatenate(types)
+        idx = np.random.choice(len(preds), min(self.num_samples, len(preds)), replace=False)
         
-        # Random sample
-        n = min(self.num_samples, len(preds))
-        idx = np.random.choice(len(preds), n, replace=False)
-        
-        # Create W&B table
-        columns = ["true", "pred", "abs_error", "pct_error", "product_type"]
-        data = []
-        for i in idx:
-            true_val = targets[i]
-            pred_val = max(preds[i], 1e-6)
-            abs_err = abs(true_val - pred_val)
-            pct_err = abs_err / true_val * 100
-            data.append([true_val, pred_val, abs_err, pct_err, int(types[i])])
-            
-        table = wandb.Table(columns=columns, data=data)
-        
+        data = [
+            [targets[i], max(preds[i], 1e-6), abs(targets[i] - preds[i]), abs(targets[i] - preds[i]) / targets[i] * 100, int(types[i])]
+            for i in idx
+        ]
+        table = wandb.Table(columns=["true", "pred", "abs_error", "pct_error", "product_type"], data=data)
         wandb.log({
             "val_samples": table,
             "epoch": trainer.current_epoch,
-            "pred_vs_true": wandb.plot.scatter(
-                table, "true", "pred",
-                title=f"Predictions vs True (Epoch {trainer.current_epoch})"
-            )
+            "pred_vs_true": wandb.plot.scatter(table, "true", "pred", title=f"Epoch {trainer.current_epoch}")
         })
 
 
 class MetricHistoryCallback(Callback):
-    """Tracks metric history for analysis."""
+    """Tracks MAPE history across epochs."""
     
     def __init__(self):
-        self.train_mape = []
-        self.val_mape = []
+        self.train_mape: list[float] = []
+        self.val_mape: list[float] = []
         
     def on_train_epoch_end(self, trainer, pl_module):
         if "train_mape" in trainer.callback_metrics:

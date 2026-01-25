@@ -1,0 +1,20 @@
+# @package _global_
+# SMAPE loss experiment
+
+experiment_name: smape
+
+training:
+  loss_fn: smape
+  epochs: 30
+  batch_size: 512
+  lr: 0.001
+
+features:
+  use_knn: true
+  knn_embeddings:
+    - minilm
+  knn_ensemble: concat
+  use_log_target: false
+
+logging:
+  run_name: smape-loss

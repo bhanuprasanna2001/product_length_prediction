@@ -1,0 +1,107 @@
+# @package _global_
+# Base configuration for Product Length Prediction
+
+defaults:
+  - _self_
+  - override hydra/hydra_logging: default
+  - override hydra/job_logging: default
+
+# Data paths
+data:
+  train_path: data/total_sentence_data/total_sentence_data/total_sentence_train.csv
+  test_path: data/total_sentence_data/total_sentence_data/total_sentence_test.csv
+  embedding_dir: data/embeddings
+  train_ratio: 0.85
+  val_ratio: 0.10
+  test_ratio: 0.05
+
+# Embedding models configuration
+embeddings:
+  models:
+    minilm:
+      name: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+      dim: 384
+    mpnet:
+      name: sentence-transformers/paraphrase-multilingual-mpnet-base-v2
+      dim: 768
+    distiluse:
+      name: sentence-transformers/distiluse-base-multilingual-cased-v1
+      dim: 512
+    e5small:
+      name: intfloat/multilingual-e5-small
+      dim: 384
+  active:
+    - minilm
+    - mpnet
+    - distiluse
+    - e5small
+  batch_size: 128
+
+# Model architecture
+model:
+  product_type_emb_dim: 128
+  hidden_dims:
+    - 1024
+    - 256
+    - 64
+  dropout: 0.2
+  use_batch_norm: true
+
+# Training hyperparameters
+training:
+  batch_size: 512
+  lr: 0.001
+  weight_decay: 0.01
+  epochs: 30
+  warmup_ratio: 0.05
+  loss_fn: mape  # Options: mape, smape, log_mape, rmsle, huber, mse, log_cosh
+  huber_delta: 0.5
+  patience: 5
+  gradient_clip_val: 1.0
+  precision: "16-mixed"
+
+# Post-processing (snapping only - calibration removed)
+postprocessing:
+  use_snapping: true
+  snap_by_type: true
+
+# Feature engineering
+features:
+  use_knn: true
+  knn_k: 20
+  knn_embeddings:
+    - minilm
+    - mpnet
+    - distiluse
+    - e5small
+  knn_ensemble: concat  # Options: concat, mean, weighted
+  use_log_target: false
+
+# Logging / experiment tracking
+logging:
+  project: amazon-product-length
+  run_name: null  # Auto-generated if null
+  log_every_n_steps: 50
+  val_check_interval: 0.25
+
+# Checkpointing
+checkpoints:
+  dir: checkpoints
+  save_top_k: 3
+  monitor: val_mape
+  mode: min
+
+# System settings
+system:
+  seed: 42
+  num_workers: 4
+
+# Hydra configuration
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}
+  job:
+    chdir: false  # Don't change working directory

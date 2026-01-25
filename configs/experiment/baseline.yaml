@@ -1,0 +1,19 @@
+# @package _global_
+# Baseline experiment - MAPE loss, single KNN embedding
+
+experiment_name: baseline
+
+training:
+  loss_fn: mape
+  epochs: 30
+  batch_size: 512
+
+features:
+  use_knn: true
+  knn_embeddings:
+    - minilm
+  knn_ensemble: concat
+  use_log_target: false
+
+logging:
+  run_name: baseline-mape-knn

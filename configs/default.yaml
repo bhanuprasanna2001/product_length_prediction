@@ -68,8 +68,9 @@ training:
   epochs: 30
   warmup_ratio: 0.05
   
-  # Loss: "mse", "huber", "mape"
-  loss_fn: "mse"
+  # Loss: "mse", "huber", "mape", "weighted_mape"
+  # Note: Plain "mape" performs best (57.87% vs 63% for weighted_mape)
+  loss_fn: "mape"
   huber_delta: 0.5
   
   # Early stopping
@@ -82,11 +83,28 @@ training:
   precision: "16-mixed"
 
 # -----------------------------------------------------------------------------
-# Post-Processing
+# Feature Engineering
+# -----------------------------------------------------------------------------
+features:
+  # KNN features for retrieval-augmented prediction
+  use_knn: true
+  knn_k: 20  # Number of neighbors
+  
+  # Multi-embedding KNN: use features from multiple embedding spaces
+  # Options: ["minilm"], ["minilm", "mpnet"], or all 4
+  knn_embeddings: ["minilm"]
+  
+  # How to combine multi-KNN features: "concat", "mean", or "weighted"
+  knn_ensemble: "concat"
+  
+  # Log-transform target for better handling of skewed distribution
+  # Model predicts log(length), then exp() to get actual length
+  use_log_target: false
+
+# -----------------------------------------------------------------------------
+# Post-Processing (calibration removed - made things worse)
 # -----------------------------------------------------------------------------
 postprocessing:
-  use_calibration: true
-  calibration_method: "isotonic"  # "isotonic" or "linear"
   use_snapping: true
   snap_by_type: true  # Type-specific vs global snapping
 

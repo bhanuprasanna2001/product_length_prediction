@@ -1,0 +1,20 @@
+# @package _global_
+# Log-transform target experiment
+
+experiment_name: log_target
+
+training:
+  loss_fn: mape
+  epochs: 30
+  batch_size: 512
+  lr: 0.001
+
+features:
+  use_knn: true
+  knn_embeddings:
+    - minilm
+  knn_ensemble: concat
+  use_log_target: true  # Key change: model predicts log(length)
+
+logging:
+  run_name: log-target-transform

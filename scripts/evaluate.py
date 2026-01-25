@@ -1,12 +1,5 @@
 #!/usr/bin/env python
-"""
-Evaluate Predictions
-====================
-Compute MAPE and RMSLE for a submission file.
-
-Usage:
-    python scripts/evaluate.py submission.csv ground_truth.csv
-"""
+"""Compute MAPE and RMSLE for a submission file."""
 
 import argparse
 import sys
@@ -24,12 +17,8 @@ def main():
     parser.add_argument("true_path", type=str, help="Ground truth CSV")
     args = parser.parse_args()
     
-    pred_df = pd.read_csv(args.pred_path)
-    true_df = pd.read_csv(args.true_path)
-    
-    merged = pred_df.merge(true_df, on="PRODUCT_ID")
-    y_true = merged["PRODUCT_LENGTH_y"].values
-    y_pred = merged["PRODUCT_LENGTH_x"].values
+    merged = pd.read_csv(args.pred_path).merge(pd.read_csv(args.true_path), on="PRODUCT_ID")
+    y_true, y_pred = merged["PRODUCT_LENGTH_y"].values, merged["PRODUCT_LENGTH_x"].values
     
     print(f"MAPE:  {mape(y_true, y_pred):.4f}%")
     print(f"RMSLE: {rmsle(y_true, y_pred):.4f}")

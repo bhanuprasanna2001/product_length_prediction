@@ -1,102 +1,76 @@
-"""
-Post-Processing Module
-======================
-Calibration, snapping, and clipping for prediction refinement.
-"""
+"""Post-processing: snap predictions to valid product lengths."""
 
+from dataclasses import dataclass, field
 import numpy as np
-from sklearn.linear_model import LinearRegression
-from sklearn.isotonic import IsotonicRegression
-from dataclasses import dataclass
+
+from ..constants import EPSILON
+
+
+def _snap_to_nearest(preds: np.ndarray, valid_lengths: np.ndarray) -> np.ndarray:
+    """Snap predictions to nearest valid length using binary search (O(n log m))."""
+    if len(valid_lengths) == 0:
+        return preds
+        
+    valid_sorted = np.sort(valid_lengths)
+    indices = np.searchsorted(valid_sorted, preds)
+    
+    left_idx = np.maximum(indices - 1, 0)
+    right_idx = np.minimum(indices, len(valid_sorted) - 1)
+    
+    left_vals, right_vals = valid_sorted[left_idx], valid_sorted[right_idx]
+    left_dist, right_dist = np.abs(preds - left_vals), np.abs(preds - right_vals)
+    
+    return np.where(left_dist <= right_dist, left_vals, right_vals)
+
+
+def _compute_mape(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    return float(np.mean(np.abs((y_true - y_pred) / (y_true + EPSILON))) * 100)
 
 
 @dataclass
-class PostProcessor:
-    """Post-processor for model predictions."""
+class Snapper:
+    """Snaps predictions to valid product lengths seen in training data."""
     
     all_valid_lengths: np.ndarray | None = None
-    lengths_by_type: dict[int, np.ndarray] | None = None
-    calibrator: object | None = None
-    min_length: float | None = None
-    max_length: float | None = None
-    
-    def fit_calibrator(
-        self,
-        val_preds: np.ndarray,
-        val_targets: np.ndarray,
-        method: str = "isotonic",
-    ):
-        """Fit calibration model on validation data."""
-        if method == "linear":
-            self.calibrator = LinearRegression()
-            self.calibrator.fit(val_preds.reshape(-1, 1), val_targets)
-        elif method == "isotonic":
-            self.calibrator = IsotonicRegression(
-                y_min=0.0,
-                y_max=val_targets.max() * 1.1,
-                out_of_bounds="clip",
-            )
-            self.calibrator.fit(val_preds, val_targets)
-        else:
-            raise ValueError(f"Unknown calibration method: {method}")
-            
-        # Report improvement
-        raw_mape = _mape(val_targets, val_preds)
-        cal_preds = self.calibrate(val_preds)
-        cal_mape = _mape(val_targets, cal_preds)
-        
-        print(f"Calibration ({method}): {raw_mape:.2f}% → {cal_mape:.2f}%")
-        
-    def calibrate(self, preds: np.ndarray) -> np.ndarray:
-        if self.calibrator is None:
-            return preds
-        if isinstance(self.calibrator, LinearRegression):
-            return self.calibrator.predict(preds.reshape(-1, 1))
-        return self.calibrator.predict(preds)
+    lengths_by_type: dict[int, np.ndarray] = field(default_factory=dict)
+    min_length: float = 1.0
+    max_length: float = 5000.0
     
     def snap_global(self, preds: np.ndarray) -> np.ndarray:
-        """Snap to nearest valid length globally."""
-        if self.all_valid_lengths is None:
+        """Snap all predictions to nearest valid length globally."""
+        if self.all_valid_lengths is None or len(self.all_valid_lengths) == 0:
             return preds
-        valid = self.all_valid_lengths
-        diffs = np.abs(valid[:, None] - preds[None, :])
-        return valid[np.argmin(diffs, axis=0)]
+        return _snap_to_nearest(preds, self.all_valid_lengths)
     
     def snap_by_type(self, preds: np.ndarray, product_types: np.ndarray) -> np.ndarray:
-        """Snap to nearest valid length per product type."""
-        if self.lengths_by_type is None:
+        """Snap predictions using type-specific valid lengths (more accurate)."""
+        if not self.lengths_by_type:
             return self.snap_global(preds)
             
-        result = np.copy(preds)
+        result = preds.copy()
         for ptype in np.unique(product_types):
             mask = product_types == ptype
-            valid = self.lengths_by_type.get(int(ptype), self.all_valid_lengths)
-            if valid is not None and len(valid) > 0:
-                type_preds = preds[mask]
-                diffs = np.abs(valid[:, None] - type_preds[None, :])
-                result[mask] = valid[np.argmin(diffs, axis=0)]
+            type_lengths = self.lengths_by_type.get(int(ptype))
+            
+            if type_lengths is not None and len(type_lengths) > 0:
+                result[mask] = _snap_to_nearest(preds[mask], type_lengths)
+            elif self.all_valid_lengths is not None:
+                result[mask] = _snap_to_nearest(preds[mask], self.all_valid_lengths)
+                
         return result
     
     def clip(self, preds: np.ndarray) -> np.ndarray:
-        if self.min_length is not None and self.max_length is not None:
-            return np.clip(preds, self.min_length, self.max_length)
-        return preds
+        return np.clip(preds, self.min_length, self.max_length)
     
     def process(
         self,
         preds: np.ndarray,
         product_types: np.ndarray | None = None,
-        use_calibration: bool = True,
         use_snapping: bool = True,
         snap_by_type: bool = True,
     ) -> np.ndarray:
-        """Full post-processing pipeline."""
-        result = preds.copy()
-        
-        if use_calibration and self.calibrator is not None:
-            result = self.calibrate(result)
-            
-        result = np.maximum(result, 1e-6)
+        """Full post-processing: ensure positive → snap → clip."""
+        result = np.maximum(preds.copy(), EPSILON)
         
         if use_snapping:
             if snap_by_type and product_types is not None:
@@ -105,6 +79,53 @@ class PostProcessor:
                 result = self.snap_global(result)
                 
         return self.clip(result)
+    
+    def evaluate(self, preds: np.ndarray, targets: np.ndarray, product_types: np.ndarray | None = None) -> dict[str, float]:
+        """Evaluate snapping impact on MAPE."""
+        result = {
+            "raw_mape": _compute_mape(targets, preds),
+            "global_snap_mape": _compute_mape(targets, self.snap_global(preds)),
+        }
+        if product_types is not None:
+            result["type_snap_mape"] = _compute_mape(targets, self.snap_by_type(preds, product_types))
+        return result
+
+
+def create_snapper(train_targets: np.ndarray, train_product_types: np.ndarray) -> Snapper:
+    """Create Snapper from training data with precomputed valid lengths."""
+    all_valid = np.sort(np.unique(train_targets))
+    
+    lengths_by_type = {
+        int(ptype): np.sort(np.unique(train_targets[train_product_types == ptype]))
+        for ptype in np.unique(train_product_types)
+    }
+    
+    from ..utils.logging import get_logger
+    get_logger(__name__).info(f"Snapper: {len(all_valid):,} unique lengths, {len(lengths_by_type):,} product types")
+    
+    return Snapper(
+        all_valid_lengths=all_valid,
+        lengths_by_type=lengths_by_type,
+        min_length=float(train_targets.min()),
+        max_length=float(train_targets.max()),
+    )
+
+
+# Backwards compatibility alias
+class PostProcessor(Snapper):
+    """Alias for Snapper (backwards compatibility)."""
+    
+    def __init__(self, **kwargs):
+        kwargs.pop('calibrator', None)  # Remove deprecated field
+        super().__init__(**kwargs)
+    
+    def fit_calibrator(self, *args, **kwargs):
+        """Deprecated: calibration was removed."""
+        pass
+    
+    def calibrate(self, preds: np.ndarray) -> np.ndarray:
+        """No-op: returns predictions unchanged."""
+        return preds
 
 
 def create_postprocessor(
@@ -114,25 +135,11 @@ def create_postprocessor(
     val_targets: np.ndarray | None = None,
     calibration_method: str = "isotonic",
 ) -> PostProcessor:
-    """Factory function to create a configured PostProcessor."""
-    pp = PostProcessor()
-    
-    pp.all_valid_lengths = np.unique(train_targets)
-    pp.lengths_by_type = {}
-    for ptype in np.unique(train_product_types):
-        mask = train_product_types == ptype
-        pp.lengths_by_type[int(ptype)] = np.unique(train_targets[mask])
-        
-    pp.min_length = train_targets.min()
-    pp.max_length = train_targets.max()
-    
-    if val_preds is not None and val_targets is not None:
-        pp.fit_calibrator(val_preds, val_targets, method=calibration_method)
-        
-    print(f"PostProcessor: {len(pp.all_valid_lengths):,} lengths, {len(pp.lengths_by_type):,} types")
-    
-    return pp
-
-
-def _mape(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    return float(np.mean(np.abs((y_true - y_pred) / y_true)) * 100)
+    """Create PostProcessor (calibration args ignored for backwards compatibility)."""
+    snapper = create_snapper(train_targets, train_product_types)
+    return PostProcessor(
+        all_valid_lengths=snapper.all_valid_lengths,
+        lengths_by_type=snapper.lengths_by_type,
+        min_length=snapper.min_length,
+        max_length=snapper.max_length,
+    )

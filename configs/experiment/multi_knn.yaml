@@ -1,0 +1,29 @@
+# @package _global_
+# Multi-KNN experiment - use all embeddings for KNN features
+
+experiment_name: multi_knn
+
+training:
+  loss_fn: mape
+  epochs: 30
+  batch_size: 512
+
+features:
+  use_knn: true
+  knn_embeddings:
+    - minilm
+    - mpnet
+    - distiluse
+    - e5small
+  knn_ensemble: concat  # Concatenate KNN features from all embeddings
+  use_log_target: false
+
+logging:
+  run_name: multi-knn-concat
+
+# Model needs more capacity for larger input
+model:
+  hidden_dims:
+    - 1536  # Larger first layer for 4x KNN features
+    - 512
+    - 128

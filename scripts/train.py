@@ -1,13 +1,5 @@
 #!/usr/bin/env python
-"""
-Train Model
-===========
-Train the ensemble model on pre-computed embeddings.
-
-Usage:
-    python scripts/train.py
-    python scripts/train.py --config configs/default.yaml
-"""
+"""Train ensemble model using YAML config."""
 
 import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"

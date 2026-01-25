@@ -5,6 +5,7 @@
 data/dataset/*
 data/total_sentence_data/*
 data/embeddings/*
+data/knn_features/*
 !data/.gitkeep
 ml_template
 wandb/*

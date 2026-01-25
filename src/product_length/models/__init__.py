@@ -1,4 +1,4 @@
-"""Model architectures."""
+"""Neural network architectures for product length prediction."""
 
 from .ensemble import EnsembleModel, MLPHead
 

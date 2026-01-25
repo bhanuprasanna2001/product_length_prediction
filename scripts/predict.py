@@ -1,13 +1,5 @@
 #!/usr/bin/env python
-"""
-Generate Predictions
-====================
-Generate submission file with post-processing.
-
-Usage:
-    python scripts/predict.py --checkpoint checkpoints/ensemble-XX-YY.ckpt
-    python scripts/predict.py --checkpoint checkpoints/ensemble-XX-YY.ckpt --no-postprocessing
-"""
+"""Generate submission file with post-processing."""
 
 import argparse
 import sys
@@ -29,7 +21,6 @@ def main():
     args = parser.parse_args()
     
     config = load_config(args.config)
-    
     predict(
         config=config,
         checkpoint_path=args.checkpoint,

@@ -1,113 +1,91 @@
-"""
-Ensemble Model Architecture
-===========================
-Lightweight MLP head for pre-computed embedding ensemble.
-"""
+"""MLP regressor for pre-computed embedding ensembles with optional KNN features."""
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
+from typing import Optional
 
 from ..config import Config
+from ..utils.losses import get_loss_fn, compute_mape, compute_rmsle
 
 
 class MLPHead(nn.Module):
-    """MLP regressor with optional batch normalization."""
+    """Multi-layer perceptron regressor with batch normalization and dropout."""
     
-    def __init__(
-        self,
-        input_dim: int,
-        hidden_dims: list[int],
-        dropout: float = 0.2,
-        use_batch_norm: bool = True,
-    ):
+    def __init__(self, input_dim: int, hidden_dims: list[int], dropout: float = 0.2, use_batch_norm: bool = True):
         super().__init__()
-        
         layers = []
-        current_dim = input_dim
-        
-        for hidden_dim in hidden_dims:
-            layers.append(nn.Linear(current_dim, hidden_dim))
+        dim = input_dim
+        for h in hidden_dims:
+            layers.extend([nn.Linear(dim, h)])
             if use_batch_norm:
-                layers.append(nn.BatchNorm1d(hidden_dim))
-            layers.append(nn.ReLU())
-            layers.append(nn.Dropout(dropout))
-            current_dim = hidden_dim
-            
-        layers.append(nn.Linear(current_dim, 1))
-        self.layers = nn.Sequential(*layers)
+                layers.append(nn.BatchNorm1d(h))
+            layers.extend([nn.ReLU(), nn.Dropout(dropout)])
+            dim = h
+        layers.append(nn.Linear(dim, 1))
+        self.net = nn.Sequential(*layers)
         
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.layers(x).squeeze(-1)
+        return self.net(x).squeeze(-1)
 
 
 class EnsembleModel(pl.LightningModule):
-    """
-    Ensemble model: text embeddings + product type → MLP → length prediction.
+    """Embedding ensemble → MLP regressor for product length prediction.
+    
+    Combines pre-computed text embeddings with product type embeddings and
+    optional KNN features, then feeds through MLP to predict length.
+    Supports log-target transform for handling skewed distributions.
     """
     
-    def __init__(self, config: Config, num_product_types: int):
+    def __init__(self, config: Config, num_product_types: int, knn_dim: int = 0, use_log_target: bool = False):
         super().__init__()
         self.save_hyperparameters(ignore=["config"])
         self.config = config
+        self.knn_dim = knn_dim
+        self.use_log_target = use_log_target
         
-        # Product type embedding
-        self.product_emb = nn.Embedding(
-            num_product_types, 
-            config.model.product_type_emb_dim,
-            padding_idx=0,
-        )
-        
-        # MLP head
-        input_dim = config.embeddings.total_dim + config.model.product_type_emb_dim
-        self.head = MLPHead(
-            input_dim=input_dim,
-            hidden_dims=config.model.hidden_dims,
-            dropout=config.model.dropout,
-            use_batch_norm=config.model.use_batch_norm,
-        )
-        
+        # Product type embedding (index 0 reserved for unknown)
+        self.product_emb = nn.Embedding(num_product_types, config.model.product_type_emb_dim, padding_idx=0)
         nn.init.normal_(self.product_emb.weight, mean=0, std=0.02)
         
-    def forward(self, text_embedding: torch.Tensor, product_type: torch.Tensor) -> torch.Tensor:
-        type_emb = self.product_emb(product_type)
-        combined = torch.cat([text_embedding, type_emb], dim=-1)
-        return self.head(combined)
-    
-    def _compute_loss(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        """Compute loss in log space."""
-        pred_log = torch.log1p(F.relu(pred))
-        target_log = torch.log1p(target)
+        # Input dimension calculation
+        input_dim = config.embeddings.total_dim + config.model.product_type_emb_dim
         
-        if self.config.training.loss_fn == "mse":
-            return F.mse_loss(pred_log, target_log)
-        elif self.config.training.loss_fn == "huber":
-            return F.huber_loss(pred_log, target_log, delta=self.config.training.huber_delta)
-        elif self.config.training.loss_fn == "mape":
-            return torch.mean(torch.abs(pred - target) / (target + 1.0))
+        # Optional KNN feature projection (32-dim learned projection)
+        if knn_dim > 0:
+            self.knn_proj = nn.Sequential(nn.Linear(knn_dim, 32), nn.ReLU(), nn.Linear(32, 32))
+            input_dim += 32
         else:
-            raise ValueError(f"Unknown loss: {self.config.training.loss_fn}")
+            self.knn_proj = None
+        
+        self.head = MLPHead(input_dim, config.model.hidden_dims, config.model.dropout, config.model.use_batch_norm)
+        self.loss_fn = get_loss_fn(config.training.loss_fn)
+        
+    def forward(self, text_embedding: torch.Tensor, product_type: torch.Tensor, knn_features: Optional[torch.Tensor] = None) -> torch.Tensor:
+        type_emb = self.product_emb(product_type)
+        
+        if knn_features is not None and self.knn_proj is not None:
+            parts = [text_embedding, type_emb, self.knn_proj(knn_features)]
+        else:
+            parts = [text_embedding, type_emb]
+            
+        return self.head(torch.cat(parts, dim=-1))
     
-    def _compute_metrics(self, pred: torch.Tensor, target: torch.Tensor) -> dict:
-        """Compute evaluation metrics."""
+    def _compute_metrics(self, pred: torch.Tensor, target: torch.Tensor) -> dict[str, torch.Tensor]:
         with torch.no_grad():
-            pred_clipped = F.relu(pred) + 1e-6
-            mape = torch.mean(torch.abs((target - pred_clipped) / target)) * 100
-            rmsle = torch.sqrt(torch.mean((torch.log1p(pred_clipped) - torch.log1p(target)) ** 2))
-        return {"mape": mape, "rmsle": rmsle}
+            pred_safe = F.relu(pred) + 1e-6
+            return {"mape": compute_mape(pred_safe, target), "rmsle": compute_rmsle(pred_safe, target)}
     
     def _step(self, batch: dict, stage: str) -> torch.Tensor:
-        pred = self(batch["text_embedding"], batch["product_type"])
-        target = batch["target"]
-        
-        loss = self._compute_loss(pred, target)
-        metrics = self._compute_metrics(pred, target)
+        pred = self(batch["text_embedding"], batch["product_type"], batch.get("knn_features"))
+        pred_safe = F.relu(pred) + 1e-6
+        loss = self.loss_fn(pred_safe, batch["target"])
+        metrics = self._compute_metrics(pred, batch["target"])
         
         self.log(f"{stage}_loss", loss, prog_bar=True, on_epoch=True)
         self.log(f"{stage}_mape", metrics["mape"], prog_bar=True, on_epoch=True)
         self.log(f"{stage}_rmsle", metrics["rmsle"], on_epoch=True)
-        
         return loss
     
     def training_step(self, batch: dict, batch_idx: int) -> torch.Tensor:
@@ -120,27 +98,18 @@ class EnsembleModel(pl.LightningModule):
         return self._step(batch, "test")
     
     def predict_step(self, batch: dict, batch_idx: int) -> torch.Tensor:
-        return self(batch["text_embedding"], batch["product_type"])
+        pred = self(batch["text_embedding"], batch["product_type"], batch.get("knn_features"))
+        if self.use_log_target:
+            pred = torch.expm1(pred)
+        return F.relu(pred) + 1e-6
     
     def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(
-            self.parameters(),
-            lr=self.config.training.lr,
-            weight_decay=self.config.training.weight_decay,
-        )
-        
-        total_steps = self.trainer.estimated_stepping_batches
+        optimizer = torch.optim.AdamW(self.parameters(), lr=self.config.training.lr, weight_decay=self.config.training.weight_decay)
+        total_steps = int(self.trainer.estimated_stepping_batches)
         warmup_steps = int(self.config.training.warmup_ratio * total_steps)
         
         scheduler = torch.optim.lr_scheduler.OneCycleLR(
-            optimizer,
-            max_lr=self.config.training.lr,
-            total_steps=total_steps,
-            pct_start=warmup_steps / total_steps,
-            anneal_strategy="cos",
+            optimizer, max_lr=self.config.training.lr, total_steps=total_steps,
+            pct_start=warmup_steps / total_steps, anneal_strategy="cos"
         )
-        
-        return {
-            "optimizer": optimizer,
-            "lr_scheduler": {"scheduler": scheduler, "interval": "step"},
-        }
+        return {"optimizer": optimizer, "lr_scheduler": {"scheduler": scheduler, "interval": "step"}}

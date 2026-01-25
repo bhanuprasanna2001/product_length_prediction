@@ -1,0 +1,39 @@
+# @package _global_
+# Best settings - Multi-KNN with MAPE loss (combine best approaches)
+
+experiment_name: best
+
+training:
+  loss_fn: mape
+  epochs: 50
+  batch_size: 1024
+  lr: 0.0005
+  weight_decay: 0.02
+  patience: 7
+  warmup_ratio: 0.1
+
+features:
+  use_knn: true
+  knn_embeddings:
+    - minilm
+    - mpnet
+    - distiluse
+    - e5small
+  knn_ensemble: concat
+  use_log_target: false
+
+model:
+  hidden_dims:
+    - 2048
+    - 512
+    - 128
+  dropout: 0.25
+  use_batch_norm: true
+  product_type_emb_dim: 256
+
+postprocessing:
+  use_snapping: true
+  snap_by_type: true
+
+logging:
+  run_name: best-multi-knn
