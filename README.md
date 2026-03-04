@@ -8,7 +8,7 @@ Predict the physical length of Amazon products from text metadata (title, bullet
 
 **Competition metric:** MAPE (Mean Absolute Percentage Error)
 
-$$\text{Score} = \max\!\bigl(0,\; 100 \times (1 - \text{MAPE})\bigr)$$
+$$\text{Score} = \max (0, 100 \times (1 - MAPE))$$
 
 ---
 
