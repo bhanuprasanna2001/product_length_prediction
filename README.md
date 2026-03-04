@@ -7,6 +7,7 @@
 Predict the physical length of Amazon products from text metadata (title, bullet points, description) using a multi-embedding ensemble with KNN retrieval features.
 
 **Competition metric:** MAPE (Mean Absolute Percentage Error)
+
 $$\text{Score} = \max\!\bigl(0,\; 100 \times (1 - \text{MAPE})\bigr)$$
 
 ---
