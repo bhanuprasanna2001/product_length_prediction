@@ -1,115 +1,97 @@
-"""Extract KNN features from embeddings for retrieval-augmented prediction."""
+#!/usr/bin/env python
+"""Extract KNN retrieval features from pre-computed embeddings.
+
+For each sample, finds K nearest neighbors in embedding space and computes
+statistical features (mean, std, median, min, max) from their product lengths.
+
+Usage:
+    python scripts/extract_knn_features.py --embedding minilm
+    python scripts/extract_knn_features.py --embeddings minilm mpnet distiluse e5small --k 20
+"""
 
 import argparse
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
+
+from src.product_length.config import Config
+from src.product_length.embeddings import build_faiss_index, extract_knn_features
 
 
-def load_embedding(embedding_dir: Path, model: str, split: str) -> np.ndarray:
-    path = embedding_dir / f"{model}_{split}.npy"
-    if not path.exists():
-        raise FileNotFoundError(f"Embedding not found: {path}")
-    return np.load(path)
+def process_embedding(
+    name: str, cfg: Config, lengths: np.ndarray, k: int
+):
+    """Build FAISS index and extract KNN features for train (and test if available)."""
+    print(f"\n{'=' * 55}")
+    print(f"  {name}")
+    print(f"{'=' * 55}")
 
+    train_emb = np.load(cfg.embedding_dir / f"{name}_train.npy")
+    print(f"  Train embeddings: {train_emb.shape}")
 
-def extract_knn_features_batch(index, embeddings: np.ndarray, lengths: np.ndarray, k: int, batch_size: int = 50000) -> np.ndarray:
-    """Extract KNN features [mean, std, median, min, max] in batches."""
-    import faiss
-    
-    n = len(embeddings)
-    features = np.zeros((n, 5), dtype=np.float32)
-    
-    for i in tqdm(range(0, n, batch_size), desc="Extracting KNN features"):
-        end = min(i + batch_size, n)
-        batch = embeddings[i:end].astype(np.float32).copy()
-        faiss.normalize_L2(batch)
-        
-        _, indices = index.search(batch, k)
-        neighbor_lengths = lengths[indices]
-        
-        features[i:end, 0] = neighbor_lengths.mean(axis=1)
-        features[i:end, 1] = neighbor_lengths.std(axis=1)
-        features[i:end, 2] = np.median(neighbor_lengths, axis=1)
-        features[i:end, 3] = neighbor_lengths.min(axis=1)
-        features[i:end, 4] = neighbor_lengths.max(axis=1)
-    
-    return features
+    # Build index from training embeddings
+    index = build_faiss_index(train_emb)
+
+    # Train features (exclude self-match)
+    print(f"  Extracting train KNN features (k={k})...")
+    train_features = extract_knn_features(index, train_emb, lengths, k, is_train=True)
+    out_path = cfg.knn_dir / f"knn_k{k}_{name}_train.npy"
+    np.save(out_path, train_features)
+    print(f"  Saved: {out_path} {train_features.shape}")
+
+    # Test features (if test embeddings exist)
+    test_path = cfg.embedding_dir / f"{name}_test.npy"
+    if test_path.exists():
+        test_emb = np.load(test_path)
+        print(f"  Test embeddings: {test_emb.shape}")
+        print(f"  Extracting test KNN features...")
+        test_features = extract_knn_features(index, test_emb, lengths, k, is_train=False)
+        out_path = cfg.knn_dir / f"knn_k{k}_{name}_test.npy"
+        np.save(out_path, test_features)
+        print(f"  Saved: {out_path} {test_features.shape}")
+
+    # Print feature statistics
+    for i, stat in enumerate(["mean", "std", "median", "min", "max"]):
+        print(f"    knn_{stat:7s}: mean={train_features[:, i].mean():8.2f}  std={train_features[:, i].std():8.2f}")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Extract KNN features")
-    parser.add_argument("--embedding", type=str, default="minilm", choices=["minilm", "mpnet", "distiluse", "e5small"])
-    parser.add_argument("--k", type=int, default=20)
-    parser.add_argument("--embedding-dir", type=str, default="data/embeddings")
-    parser.add_argument("--data-dir", type=str, default="data/total_sentence_data/total_sentence_data")
-    parser.add_argument("--output-dir", type=str, default="data/knn_features")
+    parser = argparse.ArgumentParser(
+        description="Extract KNN retrieval features from pre-computed embeddings",
+        epilog="Example: python scripts/extract_knn_features.py --models minilm mpnet distiluse e5small",
+    )
+    parser.add_argument("--config", default="configs/default.yaml")
+    parser.add_argument(
+        "--models", nargs="+", default=None,
+        help="Embedding model names to process (e.g. minilm mpnet). Defaults to knn_embeddings in config.",
+    )
+    parser.add_argument("--k", type=int, default=20, help="Number of neighbors")
     args = parser.parse_args()
-    
-    import faiss
-    
-    embedding_dir, data_dir, output_dir = Path(args.embedding_dir), Path(args.data_dir), Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    print(f"\n{'='*60}\nKNN Feature Extraction\n{'='*60}")
-    print(f"Embedding: {args.embedding}, K: {args.k}")
-    
-    # Load data
-    print("\nLoading embeddings...")
-    train_embeddings = load_embedding(embedding_dir, args.embedding, "train")
-    print(f"  Train: {train_embeddings.shape}")
-    
-    test_path = embedding_dir / f"{args.embedding}_test.npy"
-    has_test = test_path.exists()
-    if has_test:
-        test_embeddings = load_embedding(embedding_dir, args.embedding, "test")
-        print(f"  Test: {test_embeddings.shape}")
-    
-    print("\nLoading lengths...")
-    train_lengths = pd.read_csv(data_dir / "total_sentence_train.csv")["PRODUCT_LENGTH"].values.astype(np.float32)
-    print(f"  Samples: {len(train_lengths):,}, Range: [{train_lengths.min():.1f}, {train_lengths.max():.1f}]")
-    
-    # Build index
-    print("\nBuilding FAISS index...")
-    train_norm = train_embeddings.astype(np.float32).copy()
-    faiss.normalize_L2(train_norm)
-    index = faiss.IndexFlatIP(train_embeddings.shape[1])
-    index.add(train_norm)
-    print(f"  Built: {index.ntotal:,} vectors")
-    
-    # Extract train features (exclude self with k+1)
-    print(f"\nExtracting train KNN features...")
-    train_features = np.zeros((len(train_embeddings), 5), dtype=np.float32)
-    batch_size = 50000
-    
-    for i in tqdm(range(0, len(train_embeddings), batch_size), desc="Train KNN"):
-        end = min(i + batch_size, len(train_embeddings))
-        _, indices = index.search(train_norm[i:end], args.k + 1)
-        neighbor_lengths = train_lengths[indices[:, 1:]]  # Skip self
-        
-        train_features[i:end, 0] = neighbor_lengths.mean(axis=1)
-        train_features[i:end, 1] = neighbor_lengths.std(axis=1)
-        train_features[i:end, 2] = np.median(neighbor_lengths, axis=1)
-        train_features[i:end, 3] = neighbor_lengths.min(axis=1)
-        train_features[i:end, 4] = neighbor_lengths.max(axis=1)
-    
-    np.save(output_dir / f"knn_k{args.k}_{args.embedding}_train.npy", train_features)
-    print(f"Saved train features: {train_features.shape}")
-    
-    # Extract test features
-    if has_test:
-        print(f"\nExtracting test KNN features...")
-        test_features = extract_knn_features_batch(index, test_embeddings, train_lengths, args.k)
-        np.save(output_dir / f"knn_k{args.k}_{args.embedding}_test.npy", test_features)
-        print(f"Saved test features: {test_features.shape}")
-    
-    # Stats
-    print(f"\n{'='*60}\nFeature Statistics (Train)\n{'='*60}")
-    for i, name in enumerate(["knn_mean", "knn_std", "knn_median", "knn_min", "knn_max"]):
-        print(f"  {name:12s}: mean={train_features[:,i].mean():8.2f}, std={train_features[:,i].std():8.2f}")
-    
-    print("\n✓ Complete!")
+
+    cfg = Config.from_yaml(args.config)
+    cfg.knn_dir.mkdir(parents=True, exist_ok=True)
+    models = args.models or cfg.knn_embeddings
+
+    print(f"{'=' * 55}")
+    print(f"  KNN FEATURE EXTRACTION")
+    print(f"  Models: {models}")
+    print(f"  K: {args.k}")
+    print(f"{'=' * 55}")
+
+    # Load training lengths
+    lengths = pd.read_csv(
+        cfg.data_dir / "total_sentence_train.csv"
+    )["PRODUCT_LENGTH"].values.astype(np.float32)
+    print(f"  Training lengths: {len(lengths):,} samples, range [{lengths.min():.1f}, {lengths.max():.1f}]")
+
+    for name in models:
+        process_embedding(name, cfg, lengths, args.k)
+
+    print(f"\nDone.")
 
 
 if __name__ == "__main__":

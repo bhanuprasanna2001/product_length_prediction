@@ -1,131 +1,58 @@
-# =============================================================================
-# Product Length Prediction - Default Configuration
-# =============================================================================
-# Usage: python scripts/train.py --config configs/default.yaml
+# Product Length Prediction — Default Configuration
+#
+# Usage:
+#   python scripts/train.py --config configs/default.yaml
 
-# -----------------------------------------------------------------------------
-# Data
-# -----------------------------------------------------------------------------
-data:
-  # train_path: Has labels (PRODUCT_LENGTH) - use for training/validation/testing
-  train_path: "data/total_sentence_data/total_sentence_data/total_sentence_train.csv"
-  
-  # test_path: NO labels - only for final submission generation
-  test_path: "data/total_sentence_data/total_sentence_data/total_sentence_test.csv"
-  
-  embedding_dir: "data/embeddings"
-  
-  # Internal split of train_path into train/val/test (all have labels)
-  # Test split here is for model evaluation, NOT the competition test set
-  train_ratio: 0.80
-  val_ratio: 0.10
-  test_ratio: 0.10  # Internal test set for evaluation
+# ── Data paths ───────────────────────────────────────────────
+data_dir: "data/total_sentence_data/total_sentence_data"
+embedding_dir: "data/embeddings"
+knn_dir: "data/knn_features"
+output_dir: "checkpoints"
 
-# -----------------------------------------------------------------------------
-# Embedding Models (order matters for concatenation)
-# -----------------------------------------------------------------------------
-embeddings:
-  models:
-    minilm:
-      name: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-      dim: 384
-    mpnet:
-      name: "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
-      dim: 768
-    distiluse:
-      name: "sentence-transformers/distiluse-base-multilingual-cased-v1"
-      dim: 512
-    e5small:
-      name: "intfloat/multilingual-e5-small"
-      dim: 384
-    allmpnet:
-      name: "sentence-transformers/all-mpnet-base-v2"
-      dim: 768
-  
-  # Which models to use (can subset for faster experiments)
-  # # Total dim: 384 + 768 + 512 + 384 + 768 = 2816
-  # active: ["minilm", "mpnet", "distiluse", "e5small", "allmpnet"]
-  # Total dim: 384 + 768 + 512 + 384 = 2048
-  active: ["minilm", "mpnet", "distiluse", "e5small"]
-  batch_size: 128
+# ── Data splits ──────────────────────────────────────────────
+train_ratio: 0.85
+val_ratio: 0.10
+test_ratio: 0.05
 
-# -----------------------------------------------------------------------------
-# Model Architecture
-# -----------------------------------------------------------------------------
-model:
-  product_type_emb_dim: 128
-  hidden_dims: [1024, 256, 64]
-  dropout: 0.2
-  use_batch_norm: true
+# ── Embeddings ───────────────────────────────────────────────
+active_embeddings:
+  - minilm       # 384d
+  - mpnet        # 768d
+  - distiluse    # 512d
+  - e5small      # 384d
 
-# -----------------------------------------------------------------------------
-# Training
-# -----------------------------------------------------------------------------
-training:
-  batch_size: 512
-  lr: 1.0e-3
-  weight_decay: 0.01
-  epochs: 30
-  warmup_ratio: 0.05
-  
-  # Loss: "mse", "huber", "mape", "weighted_mape"
-  # Note: Plain "mape" performs best (57.87% vs 63% for weighted_mape)
-  loss_fn: "mape"
-  huber_delta: 0.5
-  
-  # Early stopping
-  patience: 5
-  
-  # Gradient clipping
-  gradient_clip_val: 1.0
-  
-  # Mixed precision
-  precision: "16-mixed"
+# ── KNN features ────────────────────────────────────────────
+use_knn: true
+knn_k: 20
+knn_embeddings:
+  - minilm
+  - mpnet
+  - distiluse
+  - e5small
 
-# -----------------------------------------------------------------------------
-# Feature Engineering
-# -----------------------------------------------------------------------------
-features:
-  # KNN features for retrieval-augmented prediction
-  use_knn: true
-  knn_k: 20  # Number of neighbors
-  
-  # Multi-embedding KNN: use features from multiple embedding spaces
-  # Options: ["minilm"], ["minilm", "mpnet"], or all 4
-  knn_embeddings: ["minilm"]
-  
-  # How to combine multi-KNN features: "concat", "mean", or "weighted"
-  knn_ensemble: "concat"
-  
-  # Log-transform target for better handling of skewed distribution
-  # Model predicts log(length), then exp() to get actual length
-  use_log_target: false
+# ── Model architecture ──────────────────────────────────────
+product_type_emb_dim: 128
+hidden_dims: [1024, 256, 64]
+dropout: 0.2
+use_batch_norm: true
 
-# -----------------------------------------------------------------------------
-# Post-Processing (calibration removed - made things worse)
-# -----------------------------------------------------------------------------
-postprocessing:
-  use_snapping: true
-  snap_by_type: true  # Type-specific vs global snapping
+# ── Training ────────────────────────────────────────────────
+batch_size: 512
+lr: 1.0e-3
+weight_decay: 0.01
+epochs: 30
+warmup_ratio: 0.05
+patience: 5
+gradient_clip_val: 1.0
+loss_fn: "mape"
+use_log_target: true
 
-# -----------------------------------------------------------------------------
-# Logging & Checkpoints
-# -----------------------------------------------------------------------------
-logging:
-  project: "amazon-product-length"
-  run_name: null  # Auto-generated if null
-  log_every_n_steps: 50
-  val_check_interval: 0.25  # Validate 4x per epoch
+# ── Logging ─────────────────────────────────────────────────
+wandb_project: "amazon-product-length"
+wandb_run_name: null
+log_every_n_steps: 50
+val_check_interval: 0.25
 
-checkpoints:
-  dir: "checkpoints"
-  save_top_k: 3
-  monitor: "val_mape"
-  mode: "min"
-
-# -----------------------------------------------------------------------------
-# System
-# -----------------------------------------------------------------------------
-system:
-  seed: 42
-  num_workers: 4
+# ── System ──────────────────────────────────────────────────
+seed: 42
+num_workers: 2

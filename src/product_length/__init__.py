@@ -1,25 +1,28 @@
-"""Product length prediction from text using multilingual embeddings.
-
-Predicts product dimensions from text metadata (title, description, bullets)
-using pre-computed multilingual embeddings and MLP regression optimized for MAPE.
+"""
+Product Length Prediction
+=========================
+Multi-embedding ensemble with KNN retrieval features for predicting
+Amazon product physical length from text metadata.
 """
 
-__version__ = "2.0.0"
-
-from .config import Config, ConfigurationError
-from .constants import EPSILON, EMBEDDING_MODELS, LossType, get_embedding_dim, get_embedding_model_name
-from .protocols import LossFunction, Snapper, FeatureExtractor
+from .config import Config
+from .dataset import EmbeddingDataset
+from .model import EnsembleModel, MLPHead
+from .losses import get_loss_fn, mape_loss, compute_mape, compute_score
+from .postprocessing import Snapper, create_snapper
+from .embeddings import extract_embeddings, save_embeddings
 
 __all__ = [
-    "__version__",
     "Config",
-    "ConfigurationError",
-    "EPSILON",
-    "EMBEDDING_MODELS",
-    "LossType",
-    "get_embedding_dim",
-    "get_embedding_model_name",
-    "LossFunction",
+    "EmbeddingDataset",
+    "EnsembleModel",
+    "MLPHead",
+    "get_loss_fn",
+    "mape_loss",
+    "compute_mape",
+    "compute_score",
     "Snapper",
-    "FeatureExtractor",
+    "create_snapper",
+    "extract_embeddings",
+    "save_embeddings",
 ]

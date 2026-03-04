@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "product-length-prediction"
+version = "1.0.0"
+description = "Predict Amazon product physical length from text metadata using multi-embedding ensemble with KNN retrieval features"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+
+dependencies = [
+    "torch>=2.0",
+    "pytorch-lightning>=2.0",
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "sentence-transformers>=2.2",
+    "faiss-cpu>=1.7",
+    "wandb>=0.15",
+    "pyyaml>=6.0",
+    "tqdm>=4.65",
+    "scikit-learn>=1.2",
+    "matplotlib>=3.7",
+    "seaborn>=0.12",
+]
+
+[project.optional-dependencies]
+dev = ["ruff", "pytest", "ipykernel", "jupyterlab"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
